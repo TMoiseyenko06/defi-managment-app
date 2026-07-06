@@ -446,6 +446,27 @@ def build_position_snapshot(cfg: Config | None = None) -> dict[str, Any]:
     pct_to_lower = _signed_pct(price_current, price_lower)
     pct_to_upper = _signed_pct(price_current, price_upper)
 
+    # --- LOCATION facts for the decision rules (deterministic). ---
+    # in_upper_decile: price in the outer 10% of the range near the UPPER bound
+    # (>= lower + 90% of width). in_lower_decile: bottom 10% of the range.
+    range_width = price_upper - price_lower
+    if range_width > 0:
+        pct_of_range = (price_current - price_lower) / range_width * 100.0
+        upper_recenter_trigger = price_lower + 0.90 * range_width
+        lower_decile_level = price_lower + 0.10 * range_width
+        in_upper_decile = price_current >= upper_recenter_trigger
+        in_lower_decile = price_current <= lower_decile_level
+        dist_to_upper_trigger_usd = upper_recenter_trigger - price_current
+        dist_to_upper_trigger_pct = (
+            dist_to_upper_trigger_usd / price_current * 100.0
+            if price_current
+            else None
+        )
+    else:
+        pct_of_range = upper_recenter_trigger = lower_decile_level = None
+        in_upper_decile = in_lower_decile = None
+        dist_to_upper_trigger_usd = dist_to_upper_trigger_pct = None
+
     # --- Pool stats + naive pool-wide fee APR. ---
     gecko = _fetch_gecko_stats(pool_addr)
     fee_apr_pct = None
@@ -480,6 +501,22 @@ def build_position_snapshot(cfg: Config | None = None) -> dict[str, Any]:
         "in_range": in_range,
         "pct_to_lower": round(pct_to_lower, 3) if pct_to_lower is not None else None,
         "pct_to_upper": round(pct_to_upper, 3) if pct_to_upper is not None else None,
+        # LOCATION facts for the decision rules (deterministic)
+        "pct_of_range": round(pct_of_range, 2) if pct_of_range is not None else None,
+        "upper_recenter_trigger": round(upper_recenter_trigger, 6)
+        if upper_recenter_trigger is not None
+        else None,
+        "lower_decile_level": round(lower_decile_level, 6)
+        if lower_decile_level is not None
+        else None,
+        "in_upper_decile": in_upper_decile,
+        "in_lower_decile": in_lower_decile,
+        "dist_to_upper_trigger_pct": round(dist_to_upper_trigger_pct, 3)
+        if dist_to_upper_trigger_pct is not None
+        else None,
+        "dist_to_upper_trigger_usd": round(dist_to_upper_trigger_usd, 2)
+        if dist_to_upper_trigger_usd is not None
+        else None,
         "amount0": round(amount0, 8),
         "amount1": round(amount1, 8),
         "value_usd": round(value_usd, 2) if value_usd is not None else None,

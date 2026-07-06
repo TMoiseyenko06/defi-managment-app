@@ -135,6 +135,29 @@ it never takes down the dashboard.
 - **reasoning** — 3–5 sentences citing specific snapshot numbers.
 - **invalidation** — one observable condition that would flip the call.
 
+### Decision policy (hard constraints)
+
+The model is bound by a strict `hold`/`recenter` policy. The gating facts are
+computed **deterministically in Python** and passed in the snapshots — the LLM
+only applies the rules, it never computes them:
+
+- **LOCATION** (position snapshot): `in_upper_decile` (price in the outer 10% of
+  the range near the upper bound, i.e. `>= upper_recenter_trigger` =
+  `price_lower` + 90% of range width) and `in_lower_decile` (bottom 10%).
+- **SIGNAL** (market snapshot): `signals_confirmed` = how many of
+  `signal_daily_trend` (3+ of last 5 daily closes in the move's direction),
+  `signal_btc_aligned` (BTC same direction over 7d), and
+  `signal_volume_expansion` (volume larger on trend days than counter-trend days)
+  are true.
+
+Rules: `recenter` is allowed **only** when `in_upper_decile` **and**
+`signals_confirmed >= 2`; otherwise `hold`. Near the lower bound recenter is
+forbidden — converting to ETH there is an accepted accumulation outcome, not a
+failure. An upper-bound break to USDC is acceptable; never act only to preserve
+fee continuity. Confidence < 0.70 forces `hold`. Never add capital to repair
+drawdown. The `reasoning` leads with the action and states which triggers fired
+and the distance to the next decision point in % and $.
+
 The **History & Scores** table then grades each past verdict once it is >24h
 old: what fraction of 1h closes stayed inside the suggested range, whether it's
 still in range now, the worst adverse excursion, and whether the regime call

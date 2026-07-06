@@ -53,22 +53,64 @@ exactly:
   "invalidation": "one concrete observable condition that would flip this call"
 }
 
-Rules:
+Schema rules:
 - "regime" must be exactly one of the four enum values.
 - "action" must be exactly one of the five enum values.
 - "confidence" is a float between 0.0 and 1.0.
 - suggested_range_low < suggested_range_high, in the same price units as the \
 position snapshot (stable per volatile, e.g. USDC per WETH).
-- Rebalancing realizes impermanent loss and costs gas + fees, so "hold" is the \
-default unless the data clearly argues otherwise.
-- The suggested range must account for the expected move over roughly a week \
-(see expected_move_7d in the market snapshot).
-- reasoning must cite specific numbers from the snapshots."""
+- reasoning must cite specific numbers from the snapshots.
+
+DECISION RULES (hard constraints -- these override general LP best practices).
+The snapshots already contain the deterministic fact flags these rules need. Use \
+them; do NOT recompute them from anything else.
+
+Facts provided to you:
+- LOCATION (position snapshot): `in_upper_decile` is true when price is in the \
+outer 10% of the range near the UPPER bound (price >= `upper_recenter_trigger`, \
+which is lower_bound + 90% of range width). `in_lower_decile` is true in the \
+bottom 10% of the range. `dist_to_upper_trigger_pct` / `dist_to_upper_trigger_usd` \
+give the distance to the upper decision point.
+- SIGNAL (market snapshot): `signals_confirmed` counts how many of these three \
+are true -- `signal_daily_trend` (3+ of the last 5 daily closes in the move's \
+direction), `signal_btc_aligned` (BTC moving the same direction over 7 days), and \
+`signal_volume_expansion` (volume larger on trend days than counter-trend days).
+
+1. Recommend `recenter` ONLY when BOTH hold: `in_upper_decile` is true AND \
+`signals_confirmed` >= 2. Otherwise recommend `hold`.
+2. If only LOCATION fired (in_upper_decile true but signals_confirmed < 2), or \
+only SIGNAL fired (signals_confirmed >= 2 but in_upper_decile false): recommend \
+`hold`, and state plainly which condition is missing.
+3. ASYMMETRY: Rule 1 applies to the UPPER bound only. Near the LOWER bound \
+(`in_lower_decile` true), `recenter` is FORBIDDEN -- recommend `hold`. The \
+position converting to ETH at the lower bound is an accepted outcome (long-term \
+accumulation thesis), not a failure state.
+4. An upper-bound break converting the position to USDC is an acceptable \
+outcome. Never recommend action solely to preserve fee continuity.
+5. Confidence below 0.70 is insufficient for any action: if your `confidence` \
+< 0.70, set `action` to `hold` and state the tilt.
+6. Never recommend adding capital to a position to repair drawdown.
+
+Under this policy `action` is always `hold` or `recenter` (do not use tighten, \
+widen, or exit_to_stables). `hold` is a complete, valid answer.
+
+How to fill the JSON under these rules:
+- `reasoning`: LEAD with the action (HOLD or RECENTER). Then state which triggers \
+fired and which did not (LOCATION, and each of signal_daily_trend / \
+signal_btc_aligned / signal_volume_expansion), plus the distance to the next \
+decision point in % and $ (from dist_to_upper_trigger_pct / _usd).
+- `invalidation`: the concrete, observable level or condition that would flip \
+this read.
+- suggested range: for `hold`, echo the current bounds (`price_lower`, \
+`price_upper`). For `recenter`, propose a new range centered on the current price \
+and sized to cover roughly a week of expected movement (`expected_move_7d`)."""
 
 USER_TEMPLATE = """This is a WETH/USDC-style concentrated-liquidity position on \
-Uniswap V3 (Arbitrum). Rebalancing realizes impermanent loss and costs fees, so \
-prefer "hold" unless the data argues otherwise. Any suggested range should cover \
-roughly a week of expected movement.
+Uniswap V3 (Arbitrum). Apply the DECISION RULES from the system prompt strictly, \
+using the pre-computed LOCATION (in_upper_decile / in_lower_decile) and SIGNAL \
+(signals_confirmed and the three signal_* flags) facts below. `hold` is the \
+default and a complete answer; recommend `recenter` only when Rule 1 is fully \
+satisfied at the UPPER bound.
 
 POSITION_SNAPSHOT:
 {position}

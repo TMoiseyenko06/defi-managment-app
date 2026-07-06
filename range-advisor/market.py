@@ -26,6 +26,9 @@ KLINES_HOSTS = [
 # Hours per year, used to annualize hourly realized volatility.
 HOURS_PER_YEAR = 24 * 365
 
+# Reference asset for the decision-rule "BTC moving the same direction" signal.
+BTC_REF_SYMBOL = "BTCUSDT"
+
 
 class MarketError(Exception):
     """Raised when candle data cannot be fetched."""
@@ -167,21 +170,104 @@ def _last(series: pd.Series) -> float | None:
 # Snapshot assembly
 # --------------------------------------------------------------------------- #
 
+def _signal_facts(
+    df1d: pd.DataFrame | None, btc_1d: pd.DataFrame | None
+) -> dict[str, Any]:
+    """Deterministic SIGNAL flags for the decision rules (no LLM math).
+
+    Computes the three confirmations the recenter rule needs:
+      (i)   3+ of the last 5 daily closes in the move's direction,
+      (ii)  BTC moving the same direction over the last 7 days,
+      (iii) volume larger on trend days than counter-trend days.
+    """
+    facts: dict[str, Any] = {
+        "move_direction": None,
+        "daily_trend_days_last5": None,
+        "signal_daily_trend": None,
+        "btc_symbol": BTC_REF_SYMBOL,
+        "btc_change_24h_pct": None,
+        "btc_change_7d_pct": None,
+        "btc_direction_7d": None,
+        "signal_btc_aligned": None,
+        "volume_trend_vs_counter_ratio": None,
+        "signal_volume_expansion": None,
+        "signals_confirmed": 0,
+    }
+    if df1d is None or len(df1d) < 9:
+        return facts
+
+    closes = df1d["close"].astype(float)
+    move_chg = (closes.iloc[-1] - closes.iloc[-8]) / closes.iloc[-8] * 100.0
+    move_up = move_chg > 0
+    facts["move_direction"] = (
+        "up" if move_chg > 0 else "down" if move_chg < 0 else "flat"
+    )
+
+    # (i) daily-close trend over the last 5 daily changes.
+    daily_chg = closes.diff().dropna().tail(5)
+    cnt = int((daily_chg > 0).sum()) if move_up else int((daily_chg < 0).sum())
+    facts["daily_trend_days_last5"] = cnt
+    facts["signal_daily_trend"] = cnt >= 3
+
+    # (ii) BTC alignment over 7 days.
+    if btc_1d is not None and len(btc_1d) >= 9:
+        bc = btc_1d["close"].astype(float)
+        b7 = (bc.iloc[-1] - bc.iloc[-8]) / bc.iloc[-8] * 100.0
+        b24 = (bc.iloc[-1] - bc.iloc[-2]) / bc.iloc[-2] * 100.0
+        facts["btc_change_7d_pct"] = round(b7, 2)
+        facts["btc_change_24h_pct"] = round(b24, 2)
+        facts["btc_direction_7d"] = (
+            "up" if b7 > 0 else "down" if b7 < 0 else "flat"
+        )
+        facts["signal_btc_aligned"] = (
+            bool((b7 > 0) == move_up) if move_chg != 0 else False
+        )
+
+    # (iii) volume expansion on trend vs counter-trend days (last ~14 days).
+    d = df1d.tail(15).copy()
+    d["chg"] = d["close"].astype(float).diff()
+    d = d.dropna()
+    if move_up:
+        trend_v, counter_v = d.loc[d["chg"] > 0, "volume"], d.loc[d["chg"] < 0, "volume"]
+    else:
+        trend_v, counter_v = d.loc[d["chg"] < 0, "volume"], d.loc[d["chg"] > 0, "volume"]
+    if len(trend_v) and len(counter_v) and counter_v.mean() > 0:
+        ratio = float(trend_v.mean() / counter_v.mean())
+        facts["volume_trend_vs_counter_ratio"] = round(ratio, 2)
+        facts["signal_volume_expansion"] = ratio > 1.0
+
+    facts["signals_confirmed"] = int(
+        bool(facts["signal_daily_trend"])
+        + bool(facts["signal_btc_aligned"])
+        + bool(facts["signal_volume_expansion"])
+    )
+    return facts
+
+
 def build_market_snapshot(cfg: Config | None = None) -> dict[str, Any]:
-    """Fetch 4h + 1h candles and return one deterministic snapshot dict."""
+    """Fetch 4h + 1h + 1d candles and return one deterministic snapshot dict."""
     cfg = cfg or load_config()
     symbol = cfg.market_symbol
 
     df4 = fetch_klines(symbol, "4h", 500)   # ~83 days for trend
     df1 = fetch_klines(symbol, "1h", 720)   # 30 days for vol
+    df1d = fetch_klines(symbol, "1d", 120)  # daily trend / volume signals
+    try:
+        btc_1d = fetch_klines(BTC_REF_SYMBOL, "1d", 120)  # BTC alignment signal
+    except Exception:
+        btc_1d = None  # BTC signal degrades to null; app keeps working
 
-    return compute_market_snapshot(symbol, df4, df1)
+    return compute_market_snapshot(symbol, df4, df1, df1d, btc_1d)
 
 
 def compute_market_snapshot(
-    symbol: str, df4: pd.DataFrame, df1: pd.DataFrame
+    symbol: str,
+    df4: pd.DataFrame,
+    df1: pd.DataFrame,
+    df1d: pd.DataFrame | None = None,
+    btc_1d: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
-    """Pure indicator computation over the two candle frames (no network)."""
+    """Pure indicator computation over the candle frames (no network)."""
     price = float(df1["close"].iloc[-1])
 
     # --- 4h trend indicators ---
@@ -227,6 +313,9 @@ def compute_market_snapshot(
     def r(x: float | None, n: int = 2) -> float | None:
         return None if x is None else round(x, n)
 
+    # Deterministic SIGNAL facts for the decision rules.
+    signals = _signal_facts(df1d, btc_1d)
+
     return {
         "symbol": symbol,
         "price": r(price, 2),
@@ -260,6 +349,8 @@ def compute_market_snapshot(
         "low_7d": r(low_7d, 2),
         "change_24h_pct": r(change_24h, 2),
         "change_7d_pct": r(change_7d, 2),
+        # decision-rule SIGNAL facts (deterministic)
+        **signals,
     }
 
 
