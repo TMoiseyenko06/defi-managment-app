@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Range Advisor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='14' font-size='14'%3E%E2%9A%96%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel2: #1c2230;
+      --border: #2a313c;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+      --purple: #bc8cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+    header .sub { color: var(--muted); font-size: 12px; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px 24px 60px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--muted); margin: 0 0 14px; font-weight: 600;
+    }
+    .row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #21262d; }
+    .row:last-child { border-bottom: none; }
+    .row .k { color: var(--muted); }
+    .row .v { font-variant-numeric: tabular-nums; text-align: right; }
+    .badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .badge.in { background: rgba(63,185,80,.15); color: var(--green); }
+    .badge.out { background: rgba(248,81,73,.15); color: var(--red); }
+    .pill { padding: 2px 8px; border-radius: 6px; font-size: 11px; background: var(--panel2); color: var(--muted); }
+    button {
+      background: var(--accent); color: #04101f; border: none; border-radius: 8px;
+      padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .action-big {
+      font-size: 26px; font-weight: 700; letter-spacing: .01em; margin: 6px 0;
+    }
+    .a-hold { color: var(--green); }
+    .a-recenter, .a-tighten, .a-widen { color: var(--yellow); }
+    .a-exit_to_stables { color: var(--red); }
+    .muted { color: var(--muted); }
+    .err { color: var(--red); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+    .spinner {
+      display: inline-block; width: 15px; height: 15px; border: 2px solid var(--muted);
+      border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite;
+      vertical-align: middle; margin-left: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    .table-scroll { overflow-x: auto; }
+    .ok { color: var(--green); }
+    .bad { color: var(--red); }
+    .reasoning { background: var(--panel2); border-radius: 8px; padding: 12px; margin-top: 10px; line-height: 1.6; }
+    .kv-inline { display: flex; gap: 18px; flex-wrap: wrap; margin: 6px 0; }
+    .kv-inline > div { min-width: 120px; }
+    .kv-inline .lbl { color: var(--muted); font-size: 11px; }
+    .kv-inline .val { font-size: 16px; font-variant-numeric: tabular-nums; }
+    footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; border-top: 1px solid var(--border); }
+    canvas { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⚖️ Range Advisor</h1>
+    <span class="sub">Read-only Uniswap V3 range analyst — Arbitrum</span>
+  </header>
+
+  <div class="wrap">
+    <div class="grid">
+      <!-- 1. POSITION -->
+      <div class="card">
+        <h2>Position</h2>
+        <div id="position">Loading…</div>
+      </div>
+
+      <!-- 3. ANALYST -->
+      <div class="card">
+        <h2>Analyst</h2>
+        <button id="run-btn" onclick="runAnalysis()">Run Analysis</button>
+        <span id="run-spinner"></span>
+        <div id="analyst"></div>
+        <div id="analyst-err" class="err"></div>
+      </div>
+    </div>
+
+    <!-- 2. CHART -->
+    <div class="card">
+      <h2>Price (1h · last 30d) with range overlays</h2>
+      <canvas id="chart" height="110"></canvas>
+      <div id="chart-err" class="err"></div>
+    </div>
+
+    <!-- 4. HISTORY -->
+    <div class="card">
+      <h2>History &amp; Scores</h2>
+      <div class="table-scroll">
+        <table id="history">
+          <thead>
+            <tr>
+              <th>When (UTC)</th><th>Model</th><th>Regime</th><th>Action</th>
+              <th>Suggested range</th><th>% closes in range</th>
+              <th>In range now</th><th>Max adverse</th><th>vs baseline</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="9" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="by-model" style="margin-top:14px"></div>
+    </div>
+  </div>
+
+  <footer>
+    Read-only analytics. Not financial advice. All actions are manual.
+  </footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let chart = null;
+let position = null;
+let lastVerdict = null;
+
+function fmt(x, d = 2) {
+  if (x === null || x === undefined) return "—";
+  if (typeof x === "number") return x.toLocaleString(undefined, { maximumFractionDigits: d });
+  return x;
+}
+function usd(x) { return x === null || x === undefined ? "—" : "$" + fmt(x, 2); }
+
+async function getJSON(url, opts) {
+  const r = await fetch(url, opts);
+  let data = null;
+  try { data = await r.json(); } catch (e) { data = { error: "Bad response" }; }
+  if (!r.ok || (data && data.error)) {
+    throw new Error(data && data.error ? data.error : ("HTTP " + r.status));
+  }
+  return data;
+}
+
+// ---- 1. Position ----
+async function loadPosition() {
+  const el = $("position");
+  try {
+    const p = await getJSON("/api/position");
+    position = p;
+    const badge = p.in_range
+      ? '<span class="badge in">IN RANGE</span>'
+      : '<span class="badge out">OUT OF RANGE</span>';
+    el.innerHTML = `
+      <div class="row"><span class="k">Pair</span><span class="v">${p.pair} <span class="pill">${fmt(p.fee_tier_pct,2)}% fee</span></span></div>
+      <div class="row"><span class="k">Status</span><span class="v">${badge}</span></div>
+      <div class="row"><span class="k">Current price</span><span class="v">${fmt(p.price_current,2)} ${p.price_orientation}</span></div>
+      <div class="row"><span class="k">Range</span><span class="v">${fmt(p.price_lower,2)} – ${fmt(p.price_upper,2)}</span></div>
+      <div class="row"><span class="k">Dist. to bounds</span><span class="v">${fmt(p.pct_to_lower,2)}% / +${fmt(p.pct_to_upper,2)}%</span></div>
+      <div class="row"><span class="k">Value</span><span class="v">${usd(p.value_usd)}</span></div>
+      <div class="row"><span class="k">Token split</span><span class="v">${splitStr(p)}</span></div>
+      <div class="row"><span class="k">Uncollected fees</span><span class="v">${feesStr(p)}</span></div>
+      <div class="row"><span class="k">Pool TVL</span><span class="v">${usd(p.pool_tvl_usd)}</span></div>
+      <div class="row"><span class="k">Pool 24h volume</span><span class="v">${usd(p.pool_volume_24h_usd)}</span></div>
+      <div class="row"><span class="k">Naive fee APR (pool-wide)</span><span class="v">${p.pool_fee_apr_pct===null?"—":fmt(p.pool_fee_apr_pct,1)+"%"}</span></div>
+    `;
+    drawChart();
+  } catch (e) {
+    el.innerHTML = `<div class="err">Could not load position: ${e.message}</div>`;
+  }
+}
+function splitStr(p) {
+  if (p.volatile_split_pct === null) return "—";
+  const vol = p.pair.split("/")[0], stab = p.pair.split("/")[1];
+  return `${fmt(p.volatile_split_pct,1)}% ${vol} / ${fmt(p.stable_split_pct,1)}% ${stab}`;
+}
+function feesStr(p) {
+  if (p.uncollected_fees_usd !== null) return usd(p.uncollected_fees_usd);
+  if (p.uncollected_fees0 === null) return "—";
+  return `${fmt(p.uncollected_fees0,4)} / ${fmt(p.uncollected_fees1,4)}`;
+}
+
+// ---- 2. Chart ----
+let candles = null;
+async function loadCandles() {
+  try {
+    candles = await getJSON("/api/candles");
+    drawChart();
+  } catch (e) {
+    $("chart-err").textContent = "Chart data unavailable: " + e.message;
+  }
+}
+function hline(value, len) { return value === null || value === undefined ? [] : new Array(len).fill(value); }
+
+function drawChart() {
+  if (!candles) return;
+  // Self-contained: a chart failure (e.g. Chart.js CDN blocked/offline) must
+  // never bubble up and blank the position or candles sections.
+  if (typeof Chart === "undefined") {
+    $("chart-err").textContent = "Chart library failed to load (offline?). Other sections are unaffected.";
+    return;
+  }
+  try {
+    drawChartInner();
+  } catch (e) {
+    $("chart-err").textContent = "Chart render failed: " + e.message;
+  }
+}
+function drawChartInner() {
+  const labels = candles.times.map(t => {
+    const d = new Date(t);
+    return (d.getMonth() + 1) + "/" + d.getDate();
+  });
+  const n = labels.length;
+  const datasets = [{
+    label: "1h close", data: candles.closes, borderColor: "#58a6ff",
+    borderWidth: 1.5, pointRadius: 0, tension: 0.1,
+  }];
+  if (position) {
+    datasets.push(lineDS("My lower", hline(position.price_lower, n), "#8b949e", [6, 4]));
+    datasets.push(lineDS("My upper", hline(position.price_upper, n), "#8b949e", [6, 4]));
+  }
+  if (lastVerdict) {
+    datasets.push(lineDS("Suggested low", hline(lastVerdict.suggested_range_low, n), "#bc8cff", [3, 3]));
+    datasets.push(lineDS("Suggested high", hline(lastVerdict.suggested_range_high, n), "#bc8cff", [3, 3], "+1"));
+  }
+  const cfg = {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true, animation: false,
+      interaction: { intersect: false, mode: "index" },
+      plugins: { legend: { labels: { color: "#8b949e", boxWidth: 18 } } },
+      scales: {
+        x: { ticks: { color: "#8b949e", maxTicksLimit: 12 }, grid: { color: "#21262d" } },
+        y: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } },
+      },
+    },
+  };
+  if (chart) { chart.data = cfg.data; chart.update(); }
+  else { chart = new Chart($("chart"), cfg); }
+}
+function lineDS(label, data, color, dash, fill) {
+  return {
+    label, data, borderColor: color, borderWidth: 1.2, pointRadius: 0,
+    borderDash: dash, fill: fill || false,
+    backgroundColor: "rgba(188,140,255,0.08)",
+  };
+}
+
+// ---- 3. Analyst ----
+async function runAnalysis() {
+  const btn = $("run-btn");
+  btn.disabled = true;
+  $("run-spinner").innerHTML = '<span class="spinner"></span>';
+  $("analyst-err").textContent = "";
+  try {
+    const res = await getJSON("/api/analyze", { method: "POST" });
+    const v = res.verdict;
+    lastVerdict = v;
+    const conf = Math.round((v.confidence || 0) * 100);
+    $("analyst").innerHTML = `
+      <div class="kv-inline">
+        <div><div class="lbl">Regime</div><div class="val">${v.regime}</div></div>
+        <div><div class="lbl">Confidence</div><div class="val">${conf}%</div></div>
+        <div><div class="lbl">Model</div><div class="val" style="font-size:13px">${res.model}</div></div>
+      </div>
+      <div class="lbl muted">Recommended action</div>
+      <div class="action-big a-${v.action}">${v.action.replace(/_/g, " ").toUpperCase()}</div>
+      <div class="row"><span class="k">Suggested range</span><span class="v">${fmt(v.suggested_range_low,2)} – ${fmt(v.suggested_range_high,2)}</span></div>
+      <div class="reasoning"><strong>Reasoning.</strong> ${v.reasoning}</div>
+      <div class="reasoning"><strong>Invalidation.</strong> ${v.invalidation}</div>
+    `;
+    drawChart();
+    loadHistory();
+  } catch (e) {
+    $("analyst-err").textContent = "Analysis failed: " + e.message;
+  } finally {
+    btn.disabled = false;
+    $("run-spinner").innerHTML = "";
+  }
+}
+
+// ---- 4. History + scores ----
+async function loadHistory() {
+  const tbody = $("history").querySelector("tbody");
+  let hist, scores;
+  try {
+    hist = await getJSON("/api/history?limit=50");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" class="err">History unavailable: ${e.message}</td></tr>`;
+    return;
+  }
+  try { scores = await getJSON("/api/scores"); } catch (e) { scores = { verdicts: [], by_model: {} }; }
+  const scoreById = {};
+  (scores.verdicts || []).forEach(s => { scoreById[s.id] = s; });
+
+  const rows = hist.verdicts || [];
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="muted">No verdicts yet — run an analysis.</td></tr>`;
+  } else {
+    tbody.innerHTML = rows.map(r => {
+      const v = r.verdict, s = scoreById[r.id];
+      const when = r.created_at.replace("T", " ").slice(0, 16);
+      const range = `${fmt(v.suggested_range_low,0)}–${fmt(v.suggested_range_high,0)}`;
+      let inrangePct = "<span class='muted'>pending</span>", now = "", adverse = "", base = "";
+      if (s && s.in_suggested_range_pct !== undefined && s.in_suggested_range_pct !== null) {
+        const held = s.in_suggested_range_pct >= 80;
+        inrangePct = `<span class="${held?'ok':'bad'}">${fmt(s.in_suggested_range_pct,0)}%</span>`;
+        now = s.still_in_range_now ? "<span class='ok'>yes</span>" : "<span class='bad'>no</span>";
+        adverse = fmt(s.max_adverse_move_pct,1) + "%";
+        base = s.regime_matched_baseline === null ? "—" : (s.regime_matched_baseline ? "<span class='ok'>match</span>" : "<span class='bad'>miss</span>");
+      }
+      return `<tr>
+        <td>${when}</td><td>${r.model}</td><td>${v.regime}</td>
+        <td>${v.action.replace(/_/g,' ')}</td><td>${range}</td>
+        <td>${inrangePct}</td><td>${now}</td><td>${adverse}</td><td>${base}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  // per-model aggregates
+  const bm = scores.by_model || {};
+  const models = Object.keys(bm);
+  if (models.length) {
+    $("by-model").innerHTML = "<div class='lbl muted' style='margin-bottom:6px'>Per-model aggregates (graded verdicts &gt;24h old)</div>" +
+      '<div class="table-scroll"><table><thead><tr><th>Model</th><th>Scored</th><th>Avg % in range</th><th>% still in range</th><th>Avg max adverse</th><th>Baseline match</th></tr></thead><tbody>' +
+      models.map(m => {
+        const a = bm[m];
+        return `<tr><td>${m}</td><td>${a.n_scored}</td><td>${fmt(a.avg_in_suggested_range_pct,0)}%</td><td>${fmt(a.pct_still_in_range_now,0)}%</td><td>${fmt(a.avg_max_adverse_move_pct,1)}%</td><td>${a.baseline_match_rate_pct===null?"—":fmt(a.baseline_match_rate_pct,0)+"%"}</td></tr>`;
+      }).join("") + "</tbody></table></div>";
+  } else {
+    $("by-model").innerHTML = "";
+  }
+}
+
+// ---- boot (each section independent; one failure never blanks the page) ----
+loadPosition();
+loadCandles();
+loadHistory();
+</script>
+</body>
+</html>

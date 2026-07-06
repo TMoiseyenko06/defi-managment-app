@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+web3>=7.0
+requests>=2.31
+pandas>=2.0
+python-dotenv>=1.0

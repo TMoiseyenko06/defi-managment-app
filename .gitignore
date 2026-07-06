@@ -1,0 +1,20 @@
+# Secrets — never commit
+.env
+range-advisor/.env
+
+# Local SQLite databases
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
