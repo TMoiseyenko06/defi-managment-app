@@ -309,13 +309,32 @@ def build_position_snapshot(cfg: Config | None = None) -> dict[str, Any]:
     if not cfg.position_token_id:
         raise ChainError("POSITION_TOKEN_ID is not set.")
 
-    token_id = int(cfg.position_token_id)
+    try:
+        token_id = int(cfg.position_token_id)
+    except ValueError as exc:
+        raise ChainError(
+            f"POSITION_TOKEN_ID must be a number, got {cfg.position_token_id!r}."
+        ) from exc
+
     w3 = get_web3(cfg.arbitrum_rpc)
     if not w3.is_connected():
         raise ChainError(f"Could not connect to RPC: {cfg.arbitrum_rpc}")
 
     pm = w3.eth.contract(address=POSITION_MANAGER, abi=POSITION_MANAGER_ABI)
-    pos = pm.functions.positions(token_id).call()
+    try:
+        pos = pm.functions.positions(token_id).call()
+    except Exception as exc:
+        if "Invalid token ID" in str(exc):
+            raise ChainError(
+                f"Token id {token_id} does not exist on Arbitrum's Uniswap V3 "
+                "position manager. Check that: (1) the id is correct; (2) it is an "
+                "Arbitrum position — the app.uniswap.org URL must read "
+                "'/positions/v3/arbitrum/<id>', not ethereum/optimism/base/etc.; "
+                "and (3) the position NFT hasn't been burned (fully withdrawn + "
+                "closed). To list your wallet's active ids, set WALLET_ADDRESS in "
+                ".env (leave POSITION_TOKEN_ID blank) and run `python -m chain`."
+            ) from exc
+        raise ChainError(f"Could not read position {token_id}: {exc}") from exc
     (
         _nonce,
         _operator,
