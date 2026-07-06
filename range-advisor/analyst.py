@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import requests
@@ -172,29 +173,49 @@ def validate_verdict(obj: Any) -> dict[str, Any]:
 
 
 def _call_openrouter(
-    messages: list[dict[str, str]], api_key: str, model: str
+    messages: list[dict[str, str]],
+    api_key: str,
+    model: str,
+    network_retries: int = 2,
 ) -> dict[str, Any]:
-    resp = requests.post(
-        OPENROUTER_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            # Optional attribution headers accepted by OpenRouter.
-            "HTTP-Referer": "http://localhost:8000",
-            "X-Title": "range-advisor",
-        },
-        json={
-            "model": model,
-            "messages": messages,
-            "temperature": 0,
-        },
-        timeout=90,
-    )
-    if resp.status_code != 200:
-        raise AnalystError(
-            f"OpenRouter returned HTTP {resp.status_code}: {resp.text[:400]}"
-        )
-    return resp.json()
+    last_exc: Exception | None = None
+    for attempt in range(network_retries + 1):
+        try:
+            resp = requests.post(
+                OPENROUTER_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    # Optional attribution headers accepted by OpenRouter.
+                    "HTTP-Referer": "http://localhost:8000",
+                    "X-Title": "range-advisor",
+                },
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0,
+                },
+                timeout=90,
+            )
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            # Transient DNS / connection / timeout: back off and retry.
+            last_exc = exc
+            if attempt < network_retries:
+                time.sleep(2 ** attempt)
+                continue
+            raise AnalystError(
+                "Could not reach openrouter.ai after retries (network/DNS/timeout). "
+                "Check your internet connection, VPN, or firewall, then try again."
+            ) from exc
+
+        if resp.status_code != 200:
+            raise AnalystError(
+                f"OpenRouter returned HTTP {resp.status_code}: {resp.text[:400]}"
+            )
+        return resp.json()
+
+    # Unreachable, but keeps type-checkers happy.
+    raise AnalystError(f"OpenRouter request failed: {last_exc}")
 
 
 def run_analysis(
