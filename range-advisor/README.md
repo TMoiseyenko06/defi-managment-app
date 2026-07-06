@@ -79,9 +79,26 @@ python tests/test_scorer.py
 # or, if pytest is installed:  pytest -q
 
 # Start the dashboard:
-uvicorn app:app --reload
+python -m uvicorn app:app --reload
 # then open http://127.0.0.1:8000
 ```
+
+`python -m uvicorn` is used instead of the bare `uvicorn` command so it works
+even when the venv's scripts folder isn't on your PATH.
+
+**Windows (PowerShell).** If `uvicorn` "is not recognized", the venv isn't on
+PATH. The most reliable form calls the venv's Python directly — no activation
+needed:
+
+```powershell
+cd range-advisor
+.venv\Scripts\python.exe -m pip install -r requirements.txt   # first time only
+.venv\Scripts\python.exe -m uvicorn app:app --reload
+```
+
+(If `Activate.ps1` fails on execution policy, either use the direct
+`.venv\Scripts\python.exe ...` form above, or run once in that shell:
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.)
 
 Click **Run Analysis** to send the current snapshots to the model, store the
 verdict, and draw the suggested range on the chart.
