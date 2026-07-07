@@ -71,10 +71,12 @@ outer 10% of the range near the UPPER bound (price >= `upper_recenter_trigger`, 
 which is lower_bound + 90% of range width). `in_lower_decile` is true in the \
 bottom 10% of the range. `dist_to_upper_trigger_pct` / `dist_to_upper_trigger_usd` \
 give the distance to the upper decision point.
-- SIGNAL (market snapshot): `signals_confirmed` counts how many of these three \
-are true -- `signal_daily_trend` (3+ of the last 5 daily closes in the move's \
-direction), `signal_btc_aligned` (BTC moving the same direction over 7 days), and \
-`signal_volume_expansion` (volume larger on trend days than counter-trend days).
+- SIGNAL (market snapshot, computed on HOURLY candles): `signals_confirmed` \
+counts how many of these three are true -- `signal_hourly_trend` (a majority of \
+the last `trend_window_hours` hourly closes in the move's direction), \
+`signal_btc_aligned` (BTC moving the same direction over the same hourly window), \
+and `signal_volume_expansion` (volume larger on trend hours than counter-trend \
+hours over `volume_window_hours`).
 
 1. Recommend `recenter` ONLY when BOTH hold: `in_upper_decile` is true AND \
 `signals_confirmed` >= 2. Otherwise recommend `hold`.
@@ -96,7 +98,7 @@ widen, or exit_to_stables). `hold` is a complete, valid answer.
 
 How to fill the JSON under these rules:
 - `reasoning`: LEAD with the action (HOLD or RECENTER). Then state which triggers \
-fired and which did not (LOCATION, and each of signal_daily_trend / \
+fired and which did not (LOCATION, and each of signal_hourly_trend / \
 signal_btc_aligned / signal_volume_expansion), plus the distance to the next \
 decision point in % and $ (from dist_to_upper_trigger_pct / _usd).
 - `invalidation`: the concrete, observable level or condition that would flip \

@@ -29,6 +29,14 @@ HOURS_PER_YEAR = 24 * 365
 # Reference asset for the decision-rule "BTC moving the same direction" signal.
 BTC_REF_SYMBOL = "BTCUSDT"
 
+# SIGNAL windows, in hours (computed on hourly candles, not daily). Tune here.
+SIGNAL_TREND_HOURS = 24        # window for the hourly-close trend + BTC alignment
+SIGNAL_VOLUME_HOURS = 48       # window for the volume-expansion comparison
+# Fraction of hourly bars that must close in the move's direction to confirm the
+# trend. 0.55 = a clear lean; hourly bars are noisier than daily, so the old
+# daily 0.60 (3-of-5) is too strict here. Raise toward 0.60 for a stricter trend.
+SIGNAL_TREND_MIN_FRACTION = 0.55
+
 
 class MarketError(Exception):
     """Raised when candle data cannot be fetched."""
@@ -171,73 +179,77 @@ def _last(series: pd.Series) -> float | None:
 # --------------------------------------------------------------------------- #
 
 def _signal_facts(
-    df1d: pd.DataFrame | None, btc_1d: pd.DataFrame | None
+    df1h: pd.DataFrame | None, btc_1h: pd.DataFrame | None
 ) -> dict[str, Any]:
     """Deterministic SIGNAL flags for the decision rules (no LLM math).
 
-    Computes the three confirmations the recenter rule needs:
-      (i)   3+ of the last 5 daily closes in the move's direction,
-      (ii)  BTC moving the same direction over the last 7 days,
-      (iii) volume larger on trend days than counter-trend days.
+    Computed on HOURLY candles. The three confirmations the recenter rule needs:
+      (i)   a majority of the last SIGNAL_TREND_HOURS hourly closes in the
+            move's direction,
+      (ii)  BTC moving the same direction over the same hourly window,
+      (iii) volume larger on trend hours than counter-trend hours over the last
+            SIGNAL_VOLUME_HOURS hours.
     """
     facts: dict[str, Any] = {
         "move_direction": None,
-        "daily_trend_days_last5": None,
-        "signal_daily_trend": None,
+        "trend_window_hours": SIGNAL_TREND_HOURS,
+        "hourly_closes_in_trend": None,
+        "signal_hourly_trend": None,
         "btc_symbol": BTC_REF_SYMBOL,
-        "btc_change_24h_pct": None,
-        "btc_change_7d_pct": None,
-        "btc_direction_7d": None,
+        "btc_change_window_pct": None,
+        "btc_direction": None,
         "signal_btc_aligned": None,
+        "volume_window_hours": SIGNAL_VOLUME_HOURS,
         "volume_trend_vs_counter_ratio": None,
         "signal_volume_expansion": None,
         "signals_confirmed": 0,
     }
-    if df1d is None or len(df1d) < 9:
+    w = SIGNAL_TREND_HOURS
+    if df1h is None or len(df1h) < w + 1:
         return facts
 
-    closes = df1d["close"].astype(float)
-    move_chg = (closes.iloc[-1] - closes.iloc[-8]) / closes.iloc[-8] * 100.0
+    closes = df1h["close"].astype(float)
+    move_chg = (closes.iloc[-1] - closes.iloc[-1 - w]) / closes.iloc[-1 - w] * 100.0
     move_up = move_chg > 0
     facts["move_direction"] = (
         "up" if move_chg > 0 else "down" if move_chg < 0 else "flat"
     )
 
-    # (i) daily-close trend over the last 5 daily changes.
-    daily_chg = closes.diff().dropna().tail(5)
-    cnt = int((daily_chg > 0).sum()) if move_up else int((daily_chg < 0).sum())
-    facts["daily_trend_days_last5"] = cnt
-    facts["signal_daily_trend"] = cnt >= 3
+    # (i) hourly-close trend: how many of the last w bars closed in the move dir.
+    bar_chg = closes.diff().dropna().tail(w)
+    cnt = int((bar_chg > 0).sum()) if move_up else int((bar_chg < 0).sum())
+    need = math.ceil(SIGNAL_TREND_MIN_FRACTION * w)
+    facts["hourly_closes_in_trend"] = cnt
+    facts["signal_hourly_trend"] = cnt >= need
 
-    # (ii) BTC alignment over 7 days.
-    if btc_1d is not None and len(btc_1d) >= 9:
-        bc = btc_1d["close"].astype(float)
-        b7 = (bc.iloc[-1] - bc.iloc[-8]) / bc.iloc[-8] * 100.0
-        b24 = (bc.iloc[-1] - bc.iloc[-2]) / bc.iloc[-2] * 100.0
-        facts["btc_change_7d_pct"] = round(b7, 2)
-        facts["btc_change_24h_pct"] = round(b24, 2)
-        facts["btc_direction_7d"] = (
-            "up" if b7 > 0 else "down" if b7 < 0 else "flat"
+    # (ii) BTC alignment over the same hourly window.
+    if btc_1h is not None and len(btc_1h) >= w + 1:
+        bc = btc_1h["close"].astype(float)
+        bwin = (bc.iloc[-1] - bc.iloc[-1 - w]) / bc.iloc[-1 - w] * 100.0
+        facts["btc_change_window_pct"] = round(bwin, 2)
+        facts["btc_direction"] = (
+            "up" if bwin > 0 else "down" if bwin < 0 else "flat"
         )
         facts["signal_btc_aligned"] = (
-            bool((b7 > 0) == move_up) if move_chg != 0 else False
+            bool((bwin > 0) == move_up) if move_chg != 0 else False
         )
 
-    # (iii) volume expansion on trend vs counter-trend days (last ~14 days).
-    d = df1d.tail(15).copy()
-    d["chg"] = d["close"].astype(float).diff()
-    d = d.dropna()
+    # (iii) volume expansion on trend vs counter-trend hours (last vw hours).
+    vw = SIGNAL_VOLUME_HOURS
+    sub = pd.DataFrame(
+        {"chg": closes.diff(), "volume": df1h["volume"].astype(float)}
+    ).dropna().tail(vw)
     if move_up:
-        trend_v, counter_v = d.loc[d["chg"] > 0, "volume"], d.loc[d["chg"] < 0, "volume"]
+        trend_v, counter_v = sub.loc[sub["chg"] > 0, "volume"], sub.loc[sub["chg"] < 0, "volume"]
     else:
-        trend_v, counter_v = d.loc[d["chg"] < 0, "volume"], d.loc[d["chg"] > 0, "volume"]
+        trend_v, counter_v = sub.loc[sub["chg"] < 0, "volume"], sub.loc[sub["chg"] > 0, "volume"]
     if len(trend_v) and len(counter_v) and counter_v.mean() > 0:
         ratio = float(trend_v.mean() / counter_v.mean())
         facts["volume_trend_vs_counter_ratio"] = round(ratio, 2)
         facts["signal_volume_expansion"] = ratio > 1.0
 
     facts["signals_confirmed"] = int(
-        bool(facts["signal_daily_trend"])
+        bool(facts["signal_hourly_trend"])
         + bool(facts["signal_btc_aligned"])
         + bool(facts["signal_volume_expansion"])
     )
@@ -245,27 +257,25 @@ def _signal_facts(
 
 
 def build_market_snapshot(cfg: Config | None = None) -> dict[str, Any]:
-    """Fetch 4h + 1h + 1d candles and return one deterministic snapshot dict."""
+    """Fetch 4h + 1h candles and return one deterministic snapshot dict."""
     cfg = cfg or load_config()
     symbol = cfg.market_symbol
 
     df4 = fetch_klines(symbol, "4h", 500)   # ~83 days for trend
-    df1 = fetch_klines(symbol, "1h", 720)   # 30 days for vol
-    df1d = fetch_klines(symbol, "1d", 120)  # daily trend / volume signals
+    df1 = fetch_klines(symbol, "1h", 720)   # 30 days for vol + hourly signals
     try:
-        btc_1d = fetch_klines(BTC_REF_SYMBOL, "1d", 120)  # BTC alignment signal
+        btc_1h = fetch_klines(BTC_REF_SYMBOL, "1h", 720)  # hourly BTC alignment
     except Exception:
-        btc_1d = None  # BTC signal degrades to null; app keeps working
+        btc_1h = None  # BTC signal degrades to null; app keeps working
 
-    return compute_market_snapshot(symbol, df4, df1, df1d, btc_1d)
+    return compute_market_snapshot(symbol, df4, df1, btc_1h)
 
 
 def compute_market_snapshot(
     symbol: str,
     df4: pd.DataFrame,
     df1: pd.DataFrame,
-    df1d: pd.DataFrame | None = None,
-    btc_1d: pd.DataFrame | None = None,
+    btc_1h: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Pure indicator computation over the candle frames (no network)."""
     price = float(df1["close"].iloc[-1])
@@ -313,8 +323,8 @@ def compute_market_snapshot(
     def r(x: float | None, n: int = 2) -> float | None:
         return None if x is None else round(x, n)
 
-    # Deterministic SIGNAL facts for the decision rules.
-    signals = _signal_facts(df1d, btc_1d)
+    # Deterministic SIGNAL facts for the decision rules (hourly candles).
+    signals = _signal_facts(df1, btc_1h)
 
     return {
         "symbol": symbol,

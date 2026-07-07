@@ -144,11 +144,13 @@ only applies the rules, it never computes them:
 - **LOCATION** (position snapshot): `in_upper_decile` (price in the outer 10% of
   the range near the upper bound, i.e. `>= upper_recenter_trigger` =
   `price_lower` + 90% of range width) and `in_lower_decile` (bottom 10%).
-- **SIGNAL** (market snapshot): `signals_confirmed` = how many of
-  `signal_daily_trend` (3+ of last 5 daily closes in the move's direction),
-  `signal_btc_aligned` (BTC same direction over 7d), and
-  `signal_volume_expansion` (volume larger on trend days than counter-trend days)
-  are true.
+- **SIGNAL** (market snapshot, from **hourly** candles): `signals_confirmed` =
+  how many of `signal_hourly_trend` (a majority of the last `trend_window_hours`
+  hourly closes in the move's direction), `signal_btc_aligned` (BTC same
+  direction over the same hourly window), and `signal_volume_expansion` (volume
+  larger on trend hours than counter-trend hours over `volume_window_hours`) are
+  true. Windows are tunable constants at the top of `market.py`
+  (`SIGNAL_TREND_HOURS`, `SIGNAL_VOLUME_HOURS`).
 
 Rules: `recenter` is allowed **only** when `in_upper_decile` **and**
 `signals_confirmed >= 2`; otherwise `hold`. Near the lower bound recenter is
